@@ -10,12 +10,13 @@ font = pygame.font.Font('freesansbold.ttf', 32)
 
 WHITE = (255, 255, 255)
 RED = (255, 0, 0)
+DARKRED = (100, 0, 0)
 GREEN = (0, 255, 0)
-BLUE = (0, 0, 255)
+DARKGREEN = (0, 100, 0)
 BLACK = (0, 0, 0)
 
 BLOCK_SIZE = 20
-SPEED = 10
+SPEED = 40
 
 
 class Direction(Enum):
@@ -30,9 +31,12 @@ Point = namedtuple("Point", "x, y")
 
 class GameAI:
 
-    def __init__(self, w=800, h=800):
+    def __init__(self, w=600, h=600):
         self.w = w
         self.h = h
+
+        self.leftTurn = 0
+        self.rightTurn = 0
 
         self.display = pygame.display.set_mode((self.w, self.h))
         pygame.display.set_caption("Snek")
@@ -42,26 +46,36 @@ class GameAI:
     def reset(self):
         self.direction = Direction.RIGHT
 
-        self.head = Point(self.w/2, self.h/2)
+        self.head = Point(self.w//2, self.h//2)
 
         # The body initially contains 3 blocks
         self.fullBody = [self.head,
                          Point(self.head.x - BLOCK_SIZE, self.head.y),
-                         Point(self.head.x - 2*BLOCK_SIZE, self.head.y)]
+                         Point(self.head.x - 2*BLOCK_SIZE, self.head.y),
+                         Point(self.head.x - 3*BLOCK_SIZE, self.head.y)
+                         ]
 
         self.score = 0
         self.food = None
         self.placeFood()
         self.frameIteration = 0
 
-    def placeFood(self):
-        x = random.randint(0, (self.w - BLOCK_SIZE) // BLOCK_SIZE) * BLOCK_SIZE
-        y = random.randint(0, (self.h - BLOCK_SIZE) // BLOCK_SIZE) * BLOCK_SIZE
-        self.food = Point(x, y)
+    def placeFood(self, pt=None):
 
-        # If the snake eats the food
-        if self.food in self.fullBody:
-            self.placeFood()
+        if pt == None:
+            x = random.randint(0, (self.w - BLOCK_SIZE) //
+                               (BLOCK_SIZE)) * (BLOCK_SIZE)
+            y = random.randint(0, (self.h - BLOCK_SIZE) //
+                               (BLOCK_SIZE)) * (BLOCK_SIZE)
+            self.food = Point(x, y)
+
+            # If the food spawns inside the snake
+            if self.food in self.fullBody:
+                self.placeFood()
+        else:
+            x = self.head.x + 5*BLOCK_SIZE
+            y = self.head.y
+            self.food = Point(x, y)
 
     def playStep(self, action):
 
@@ -74,14 +88,18 @@ class GameAI:
 
         # Move the snake
         self.move(action)
+        # if (self.frameIteration % len(self.fullBody) == 0) and self.frameIteration > 50 * len(self.fullBody):
+        #     reward = -1
+        # else:
+        #     reward = 0
         reward = 0
-        # insert the old head position into the snake
+        # inserting updated head position to the front of snake
         self.fullBody.insert(0, self.head)
 
         gameOver = False
         if self.isColliding() or self.frameIteration > 100 * len(self.fullBody):
             gameOver = True
-            reward = 10
+            reward = -10
             return reward, gameOver, self.score
 
         if self.head == self.food:
@@ -112,22 +130,51 @@ class GameAI:
 
         return False
 
+    def isCollinear(self, pt):
+        return (self.food.x - self.head.x) * (pt.y -
+                                              self.head.y) == (pt.x - self.head.x) * (self.food.y - self.head.y)
+
+    def isBetween(self, pt):
+        return (self.head <= pt <= self.food or self.food <= pt <= self.head)
+
+    def hasLineOfSight(self):
+        for pt in self.fullBody[1:]:
+            if self.isCollinear(pt) and self.isBetween(pt):
+                return False
+        return True
+
+    def distanceXToFood(self):
+        return abs(self.head.x - self.food.x)
+
+    def distanceYToFood(self):
+        return abs(self.head.y - self.food.y)
+
     def updateUI(self):
         self.display.fill(BLACK)
 
         for block in self.fullBody:
             pygame.draw.rect(self.display, GREEN, pygame.Rect(
                 block.x, block.y, BLOCK_SIZE, BLOCK_SIZE))
-            # pygame.draw.rect(self.display, BLUE, pygame.Rect(
+            # Fanciness
+            # pygame.draw.rect(self.display, GREEN, pygame.Rect(
             #     block.x + 4, block.y + 4, BLOCK_SIZE, BLOCK_SIZE))
 
         pygame.draw.rect(self.display, RED, pygame.Rect(
-            self.food.x, self.food.y, BLOCK_SIZE, BLOCK_SIZE))
+            self.food.x, self.food.y, BLOCK_SIZE - 1, BLOCK_SIZE - 1))
+        # More fanciness
+        # pygame.draw.rect(self.display, RED, pygame.Rect(
+        #     self.food.x + 4, self.food.y + 4, BLOCK_SIZE, BLOCK_SIZE))
 
         text = font.render(
             "Score = " + str(self.score), True, WHITE)
         self.display.blit(text, [0, 0])
         pygame.display.flip()
+
+    def checkTurns(self):
+        self.leftTurn = self.leftTurn % 3
+        self.rightTurn = self.rightTurn % 3
+
+        return self.leftTurn, self.rightTurn
 
     def move(self, action):
 
@@ -138,14 +185,20 @@ class GameAI:
         if action == [1, 0, 0]:
             # no change in direction
             newDirection = self.direction
+            self.rightTurn = 0
+            self.leftTurn = 0
         elif action == [0, 1, 0]:
             # turn right
             nextIdx = (idx + 1) % 4
             newDirection = clockwise[nextIdx]
+            self.rightTurn += 1
+            self.leftTurn = 0
         elif action == [0, 0, 1]:
             # turn left
             nextIdx = (idx - 1) % 4
             newDirection = clockwise[nextIdx]
+            self.leftTurn += 1
+            self.rightTurn = 0
 
         self.direction = newDirection
 
