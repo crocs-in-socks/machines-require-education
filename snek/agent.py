@@ -4,10 +4,11 @@ import numpy as np
 from collections import deque
 from game import GameAI, Direction, Point
 from model import linearQNet, QTrainer
+import math
 # from plotter import plot
 
 learningRate = 0.003
-MAX_MEMORY = 100000
+MAX_MEMORY = 1000000
 BATCH_SIZE = 1000
 
 
@@ -18,8 +19,7 @@ class Agent:
         self.gamma = 0.9  # discount rate
         self.memory = deque(maxlen=MAX_MEMORY)
 
-        # model, trainer
-        self.model = linearQNet(14, 300, 3)
+        self.model = linearQNet(16, 256, 3)
         self.trainer = QTrainer(self.model, learningRate, self.gamma)
 
     def getState(self, game):
@@ -29,23 +29,27 @@ class Agent:
         blockToUp = Point(head.x, head.y - 10)
         blockToDown = Point(head.x, head.y + 10)
 
-        hasLineOfSight = game.hasLineOfSight()
+        directPathBlocked = game.hasLineOfSight()
         distanceXToFood = game.distanceXToFood()
         distanceYToFood = game.distanceYToFood()
         self.consecutiveLeft, self.consecutiveRight = game.checkTurns()
+
+        # distanceToFood = 600
+        # distanceToFood = math.sqrt(
+        #     distanceXToFood*distanceXToFood + distanceToFood*distanceYToFood)
 
         directionIsLeft = (game.direction == Direction.LEFT)
         directionIsRight = (game.direction == Direction.RIGHT)
         directionIsUp = (game.direction == Direction.UP)
         directionIsDown = (game.direction == Direction.DOWN)
 
-        dangerAhead = (game.isColliding(blockToLeft) and directionIsLeft) or (game.isColliding(blockToRight) and directionIsRight) or (
+        self.dangerAhead = (game.isColliding(blockToLeft) and directionIsLeft) or (game.isColliding(blockToRight) and directionIsRight) or (
             game.isColliding(blockToUp) and directionIsUp) or (game.isColliding(blockToDown) and directionIsDown)
 
-        dangerToLeft = (game.isColliding(blockToDown) and directionIsLeft) or (game.isColliding(blockToUp) and directionIsRight) or (
+        self.dangerToLeft = (game.isColliding(blockToDown) and directionIsLeft) or (game.isColliding(blockToUp) and directionIsRight) or (
             game.isColliding(blockToLeft) and directionIsUp) or (game.isColliding(blockToRight) and directionIsDown)
 
-        dangerToRight = (game.isColliding(blockToUp) and directionIsLeft) or (game.isColliding(blockToDown) and directionIsRight) or (
+        self.dangerToRight = (game.isColliding(blockToUp) and directionIsLeft) or (game.isColliding(blockToDown) and directionIsRight) or (
             game.isColliding(blockToRight) and directionIsUp) or (game.isColliding(blockToLeft) and directionIsDown)
 
         foodToLeft = game.food.x < head.x
@@ -53,13 +57,26 @@ class Agent:
         foodToUp = game.food.y < head.y
         foodToDown = game.food.y > head.y
 
+        bodyToLeft = False
+        bodyToRight = False
+        bodyToTop = False
+        bodyToBottom = False
+
+        for pt in game.fullBody[1:]:
+            if pt.x < head.x:
+                bodyToLeft = True
+            if pt.x > head.x:
+                bodyToRight = True
+            if pt.y < head.y:
+                bodyToTop = True
+            if pt.y > head.y:
+                bodyToBottom = True
+
         state = [
-            hasLineOfSight,
-            distanceXToFood,
-            distanceYToFood,
-            dangerAhead,
-            dangerToRight,
-            dangerToLeft,
+            directPathBlocked,
+            self.dangerAhead,
+            self.dangerToRight,
+            self.dangerToLeft,
             directionIsLeft,
             directionIsRight,
             directionIsUp,
@@ -67,7 +84,11 @@ class Agent:
             foodToLeft,
             foodToRight,
             foodToUp,
-            foodToDown
+            foodToDown,
+            bodyToLeft,
+            bodyToRight,
+            bodyToTop,
+            bodyToBottom
         ]
 
         return np.array(state, dtype=int)
@@ -92,24 +113,39 @@ class Agent:
     def getAction(self, state):
 
         # trade-off between random moves and model predicted moves
-        self.epsilon = 80 - self.gameNumber
+        self.epsilon = 200 - self.gameNumber
         nextMove = [0, 0, 0]
 
-        if random.randint(0, 200) < self.epsilon:
+        if (random.randint(0, 200) < self.epsilon):
             moveIdx = random.randint(0, 2)
             nextMove[moveIdx] = 1
 
-            if self.consecutiveLeft >= 2 and nextMove == [0, 0, 1]:
-                moveIdx = random.randint(0, 1)
-                nextMove = [0, 0, 0]
+            # if self.consecutiveLeft >= 2 and nextMove == [0, 0, 1]:
+            #     moveIdx = random.randint(0, 1)
+            #     nextMove = [0, 0, 0]
+            #     nextMove[moveIdx] = 1
+            # elif self.consecutiveRight >= 2 and nextMove == [0, 1, 0]:
+            #     moveIdx = random.randint(0, 1)
+            #     nextMove = [0, 0, 0]
+            #     if moveIdx == 1:
+            #         nextMove[2] = 1
+            #     else:
+            #         nextMove[0] = 1
+        elif (400 >= self.gameNumber > 200) and (random.randint(1, self.gameNumber//10) == 6):
+
+            if self.dangerAhead:
+                moveIdx = random.randint(1, 2)
                 nextMove[moveIdx] = 1
-            elif self.consecutiveRight >= 2 and nextMove == [0, 1, 0]:
+            elif self.dangerToLeft:
                 moveIdx = random.randint(0, 1)
-                nextMove = [0, 0, 0]
-                if moveIdx == 1:
-                    nextMove[2] = 1
-                else:
-                    nextMove[0] = 1
+                nextMove[moveIdx] = 1
+            elif self.dangerToRight:
+                moveIdx = random.randint(0, 1)
+                nextMove[moveIdx + moveIdx] = 1
+            else:
+                moveIdx = random.randint(0, 2)
+                nextMove[moveIdx] = 1
+
         else:
             # converting the currentState to a tensor to feed into our model, and also changing data type to float for more precision
             currentState = torch.tensor(state, dtype=torch.float)
@@ -171,7 +207,8 @@ def train():
             game.reset()
             agent.gameNumber += 1
             agent.trainLongMemory()
-            print("Trained long memory")
+            print(
+                f"Memory filled : {len(agent.memory)%MAX_MEMORY}")
 
             if score > record:
                 record = score

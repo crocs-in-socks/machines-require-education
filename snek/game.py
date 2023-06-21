@@ -16,7 +16,7 @@ DARKGREEN = (0, 100, 0)
 BLACK = (0, 0, 0)
 
 BLOCK_SIZE = 20
-SPEED = 40
+SPEED = 420
 
 
 class Direction(Enum):
@@ -31,12 +31,14 @@ Point = namedtuple("Point", "x, y")
 
 class GameAI:
 
-    def __init__(self, w=600, h=600):
+    def __init__(self, w=1200, h=800):
         self.w = w
         self.h = h
 
         self.leftTurn = 0
         self.rightTurn = 0
+
+        self.reward = 0
 
         self.display = pygame.display.set_mode((self.w, self.h))
         pygame.display.set_caption("Snek")
@@ -51,8 +53,7 @@ class GameAI:
         # The body initially contains 3 blocks
         self.fullBody = [self.head,
                          Point(self.head.x - BLOCK_SIZE, self.head.y),
-                         Point(self.head.x - 2*BLOCK_SIZE, self.head.y),
-                         Point(self.head.x - 3*BLOCK_SIZE, self.head.y)
+                         Point(self.head.x - 2*BLOCK_SIZE, self.head.y)
                          ]
 
         self.score = 0
@@ -92,19 +93,23 @@ class GameAI:
         #     reward = -1
         # else:
         #     reward = 0
-        reward = 0
+        self.reward = 0
         # inserting updated head position to the front of snake
         self.fullBody.insert(0, self.head)
 
         gameOver = False
-        if self.isColliding() or self.frameIteration > 100 * len(self.fullBody):
+        if self.isColliding():
             gameOver = True
-            reward = -10
-            return reward, gameOver, self.score
+            return self.reward, gameOver, self.score
+
+        if self.frameIteration > 400 * len(self.fullBody):
+            self.reward = -10
+            gameOver = True
+            return self.reward, gameOver, self.score
 
         if self.head == self.food:
             self.score += 1
-            reward = 10
+            self.reward = 10
             self.placeFood()
         else:
             # Remove the last block in snake
@@ -115,7 +120,7 @@ class GameAI:
         self.clock.tick(SPEED)
 
         # Return game over and score
-        return reward, gameOver, self.score
+        return self.reward, gameOver, self.score
 
     def isColliding(self, pt=None):
         if pt == None:
@@ -123,9 +128,11 @@ class GameAI:
 
         # hits a boundary
         if pt.x > self.w - BLOCK_SIZE or pt.x < 0 or pt.y < 0 or pt.y > self.h - BLOCK_SIZE:
+            self.reward = -10
             return True
         # hits itself
         if pt in self.fullBody[1:]:
+            self.reward = -10 * (len(self.fullBody) - 3)
             return True
 
         return False
